@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StagePulse AI - Live Performance Analyzer</title>
+    
+    <!-- טעינת Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- טעינת Babel לקימפול JSX בדפדפן -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #18181b;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            overflow-x: hidden;
+        }
+        
+        /* אנימציות מותאמות אישית לאקולייזר ולכניסות אלמנטים */
+        @keyframes eq-wave {
+            0% { height: 15%; opacity: 0.5; }
+            100% { height: 100%; opacity: 1; }
+        }
+        .playing-eq {
+            animation: eq-wave 0.6s ease-in-out infinite alternate;
+        }
+        
+        @keyframes fadeIn { 
+            from { opacity: 0; transform: translateY(10px); } 
+            to { opacity: 1; transform: translateY(0); } 
+        }
+        .animate-fade-in { 
+            animation: fadeIn 0.5s ease-out forwards; 
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <!-- סקריפט ה-React שלנו (מוגדר כמודול כדי שנוכל לייבא ספריות מ-CDN) -->
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useRef } from 'https://esm.sh/react@18';
+        import { createRoot } from 'https://esm.sh/react-dom@18/client';
+        import { 
+            Play, Pause, SkipBack, SkipForward, Volume2, Upload, Activity, 
+            Mic2, Music, Settings2, FileAudio, Clock, VolumeX, 
+            Image as ImageIcon, BookmarkPlus, Bookmark, X, GitCompare 
+        } from 'https://esm.sh/lucide-react@0.344.0';
+
+        // --- הגדרות עיצוב גלובליות ---
+        const glassPanelClass = "backdrop-blur-xl bg-white/[0.06] border border-white/15 rounded-3xl shadow-2xl";
+        const glassButtonClass = "flex items-center justify-center bg-white/[0.05] hover:bg-white/[0.12] border border-white/10 rounded-full transition-all duration-300 hover:shadow-[0_0_15px_rgba(255,255,255,0.1)] active:scale-95";
+
+        // --- נתוני מקרה המבחן (Case Study) ---
+        const gnrInsights = [
+          { 
+            id: 1, 
+            startTime: 0, 
+            endTime: 45, 
+            title: 'פתיחה אקוסטית (Intro)', 
+            description: 'ניתוח הארפג\'יו הנקי והדינמיקה השקטה מול הקהל. שימו לב להשהיות המכוונות שיוצרות מתח לפני כניסת השירה.',
+            icon: <Music className="w-5 h-5 text-blue-400" />
+          },
+          { 
+            id: 2, 
+            startTime: 45, 
+            endTime: 95, 
+            title: 'בית ראשון ו-Pre-Chorus', 
+            description: 'כניסת הבס של דאף מק\'אגן והבנייה ההדרגתית של קו התופים. המערכת מזהה עלייה של 15% בווליום הכללי של ההרכב.',
+            icon: <Activity className="w-5 h-5 text-green-400" />
+          },
+          { 
+            id: 3, 
+            startTime: 95, 
+            endTime: 145, 
+            title: 'פזמון ראשון (Chorus)', 
+            description: 'מעבר לדיסטורשן מלא. ניתוח המנעד הווקאלי של אקסל רוז מגלה חספוס ועוצמה (Grit) גבוהים יותר לעומת הקלטת האולפן ב-Use Your Illusion I.',
+            icon: <Mic2 className="w-5 h-5 text-purple-400" />
+          },
+          { 
+            id: 4, 
+            startTime: 145, 
+            endTime: 200, 
+            title: 'סולו הגיטרה של סלאש', 
+            description: 'זיהוי טכניקה חיה: Bends עמוקים במיוחד, ויברטו מהיר, ושימוש באלתור על סולם פנטטוני שאינו קיים בגרסת המקור. רמת דיוק: 98%.',
+            icon: <Settings2 className="w-5 h-5 text-orange-400" />
+          },
+          { 
+            id: 5, 
+            startTime: 200, 
+            endTime: 270, 
+            title: 'סיום ואאוטרו (Outro)', 
+            description: 'התו הארוך המפורסם בסיום. ניתוח שליטה בנשימה מראה החזקת התו למשך 18 שניות עם ויברטו עקבי בסיומו.',
+            icon: <Clock className="w-5 h-5 text-red-400" />
+          }
+        ];
+
+        function App() {
+          // --- States ---
+          const [isPlaying, setIsPlaying] = useState(false);
+          const [currentTime, setCurrentTime] = useState(0);
+          const [duration, setDuration] = useState(270);
+          const [volume, setVolume] = useState(0.8);
+          const [isMuted, setIsMuted] = useState(false);
+          
+          const [audioFileUrl, setAudioFileUrl] = useState("https://raw.githubusercontent.com/OrR1/Stageplus-AI/main/Dont%20Cry%20Live%20In%20Japan%201992.mp3");
+          const [audioFileName, setAudioFileName] = useState("Guns N' Roses - Don't Cry (Live In Japan 1992)");
+          
+          const [coverArtUrl, setCoverArtUrl] = useState("https://raw.githubusercontent.com/OrR1/Stageplus-AI/main/Guns%20and%20Roses%20Live%20era.jpg");
+          const [albumBgUrl, setAlbumBgUrl] = useState("https://raw.githubusercontent.com/OrR1/Stageplus-AI/main/Use%20Your%20Illusion%20II%20-%20Wallpaper%20-%201991.jpeg");
+          
+          const [showCompareModal, setShowCompareModal] = useState(false);
+          const [bookmarks, setBookmarks] = useState([]);
+          
+          const audioRef = useRef(null);
+          const progressBarRef = useRef(null);
+
+          // --- פורמט זמן (MM:SS) ---
+          const formatTime = (seconds) => {
+            if (isNaN(seconds)) return "0:00";
+            const m = Math.floor(seconds / 60);
+            const s = Math.floor(seconds % 60);
+            return `${m}:${s < 10 ? '0' : ''}${s}`;
+          };
+
+          // --- ניהול זמן ---
+          useEffect(() => {
+            let interval;
+            if (isPlaying && !audioFileUrl) {
+              interval = setInterval(() => {
+                setCurrentTime((prev) => {
+                  if (prev >= duration) {
+                    setIsPlaying(false);
+                    return 0;
+                  }
+                  return prev + 1;
+                });
+              }, 1000);
+            }
+            return () => clearInterval(interval);
+          }, [isPlaying, audioFileUrl, duration]);
+
+          useEffect(() => {
+            const audio = audioRef.current;
+            if (!audio) return;
+
+            const updateTime = () => setCurrentTime(audio.currentTime);
+            const updateDuration = () => {
+                if(audio.duration && !isNaN(audio.duration) && audio.duration !== Infinity) {
+                    setDuration(audio.duration);
+                }
+            };
+            const handleEnded = () => setIsPlaying(false);
+
+            audio.addEventListener('timeupdate', updateTime);
+            audio.addEventListener('loadedmetadata', updateDuration);
+            audio.addEventListener('ended', handleEnded);
+
+            return () => {
+              audio.removeEventListener('timeupdate', updateTime);
+              audio.removeEventListener('loadedmetadata', updateDuration);
+              audio.removeEventListener('ended', handleEnded);
+            };
+          }, [audioFileUrl]);
+
+          useEffect(() => {
+            if (audioRef.current) {
+              audioRef.current.volume = isMuted ? 0 : volume;
+            }
+          }, [volume, isMuted, audioFileUrl]);
+
+          // --- פעולות נגן ---
+          const togglePlay = () => {
+            if (audioFileUrl && audioRef.current) {
+              if (isPlaying) {
+                audioRef.current.pause();
+              } else {
+                audioRef.current.play();
+              }
+            }
+            setIsPlaying(!isPlaying);
+          };
+
+          const skip = (amount) => {
+            let newTime = currentTime + amount;
+            if (newTime < 0) newTime = 0;
+            if (newTime > duration) newTime = duration;
+            
+            setCurrentTime(newTime);
+            if (audioFileUrl && audioRef.current) {
+              audioRef.current.currentTime = newTime;
+            }
+          };
+
+          const handleSeek = (e) => {
+            if (!progressBarRef.current) return;
+            const rect = progressBarRef.current.getBoundingClientRect();
+            const clickX = e.clientX - rect.left; 
+            let percentage = clickX / rect.width;
+            
+            const documentDir = document.documentElement.dir || document.body.dir || "rtl";
+            if(documentDir === 'rtl') {
+                percentage = 1 - percentage;
+            }
+
+            const newTime = percentage * duration;
+            setCurrentTime(newTime);
+            if (audioFileUrl && audioRef.current) {
+              audioRef.current.currentTime = newTime;
+            }
+          };
+
+          const seekTo = (time) => {
+            setCurrentTime(time);
+            if (audioFileUrl && audioRef.current) {
+              audioRef.current.currentTime = time;
+            }
+          };
+
+          // --- העלאת קבצים ---
+          const handleFileUpload = (e) => {
+            const file = e.target.files[0];
+            if (file) {
+              const url = URL.createObjectURL(file);
+              setAudioFileUrl(url);
+              setAudioFileName(file.name);
+              setIsPlaying(false);
+              setCurrentTime(0);
+            }
+          };
+
+          const handleCoverUpload = (e) => {
+            const file = e.target.files[0];
+            if (file) setCoverArtUrl(URL.createObjectURL(file));
+          };
+
+          const handleBgUpload = (e) => {
+            const file = e.target.files[0];
+            if (file) setAlbumBgUrl(URL.createObjectURL(file));
+          };
+
+          const addBookmark = () => {
+            if (!bookmarks.includes(currentTime)) {
+              setBookmarks([...bookmarks, currentTime].sort((a, b) => a - b));
+            }
+          };
+
+          const activeInsight = gnrInsights.find(
+            (insight) => currentTime >= insight.startTime && currentTime < insight.endTime
+          );
+
+          return (
+            <div className="min-h-screen bg-[#18181b] text-white p-4 md:p-8 font-sans selection:bg-blue-500/30 overflow-x-hidden relative">
+              
+              {albumBgUrl && (
+                <div 
+                  className="absolute top-0 right-0 w-full md:w-2/3 lg:w-1/2 h-full opacity-25 pointer-events-none z-0 transition-opacity duration-1000"
+                  style={{
+                    backgroundImage: `url(${albumBgUrl})`,
+                    backgroundSize: 'cover',
+                    backgroundPosition: 'right center',
+                    WebkitMaskImage: 'linear-gradient(to left, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 80%)',
+                    maskImage: 'linear-gradient(to left, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 80%)'
+                  }}
+                ></div>
+              )}
+
+              <div className="absolute top-6 right-6 md:top-8 md:right-8 z-50">
+                <label className={`w-10 h-10 ${glassPanelClass} flex items-center justify-center cursor-pointer hover:bg-white/10 hover:shadow-[0_0_15px_rgba(255,255,255,0.1)] transition-all duration-300 rounded-full group`} title="העלה תמונת רקע לאלבום">
+                  <ImageIcon className="w-4 h-4 text-zinc-400 group-hover:text-white transition-colors" />
+                  <input type="file" accept="image/*" className="hidden" onChange={handleBgUpload} />
+                </label>
+              </div>
+
+              <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-4xl h-[500px] bg-blue-500/10 blur-[120px] rounded-full pointer-events-none opacity-50 z-0"></div>
+              <div className="absolute bottom-0 right-0 w-96 h-96 bg-purple-500/10 blur-[100px] rounded-full pointer-events-none opacity-40 z-0"></div>
+
+              <div className="max-w-7xl mx-auto relative z-10 pt-12 md:pt-0">
+                
+                <header className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className={`p-3 ${glassPanelClass} bg-gradient-to-br from-blue-500/20 to-purple-500/20`}>
+                      <Activity className="w-8 h-8 text-blue-400" />
+                    </div>
+                    <div>
+                      <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-100 to-white tracking-tight">
+                        StagePulse <span className="text-blue-400">AI</span>
+                      </h1>
+                      <p className="text-zinc-400 text-sm mt-1">Live Performance Analyzer</p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-center gap-4">
+                    <button 
+                      onClick={() => setShowCompareModal(true)}
+                      className={`px-4 py-2 ${glassPanelClass} flex items-center gap-2 hover:bg-white/10 transition-colors text-sm font-medium text-blue-200 hover:text-blue-100`}
+                    >
+                      <GitCompare className="w-4 h-4" />
+                      <span>השוואת סטודיו מול לייב</span>
+                    </button>
+                    <div className={`p-2 ${glassPanelClass} flex items-center gap-3`}>
+                      <label className="flex items-center gap-2 cursor-pointer hover:bg-white/10 px-4 py-2 rounded-2xl transition-colors">
+                        <Upload className="w-5 h-5 text-blue-300" />
+                        <span className="text-sm font-medium">העלה ביצוע</span>
+                        <input type="file" accept="audio/*" className="hidden" onChange={handleFileUpload} />
+                      </label>
+                    </div>
+                  </div>
+                </header>
+
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                  
+                  <div className="lg:col-span-7 flex flex-col gap-8">
+                    
+                    <div className={`p-8 ${glassPanelClass} relative overflow-hidden group`}>
+                      <div className="absolute inset-0 bg-gradient-to-br from-white/[0.03] to-transparent pointer-events-none"></div>
+                      
+                      <div className="flex items-center gap-4 mb-6">
+                        <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-zinc-700 to-zinc-800 border border-white/10 flex items-center justify-center shadow-lg">
+                          <FileAudio className="w-7 h-7 text-zinc-400" />
+                        </div>
+                        <div className="overflow-hidden">
+                          <h2 className="text-xl font-semibold truncate text-white/90">{audioFileName}</h2>
+                          <p className="text-sm text-zinc-400 mt-1 flex items-center gap-2">
+                            {audioFileUrl ? "מנגן כעת" : "הדמיית AI"}
+                            {!audioFileUrl && <span className="inline-flex h-2 w-2 rounded-full bg-blue-400 animate-pulse"></span>}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex justify-center mb-8 relative z-10">
+                        <label className="relative cursor-pointer group/cover block">
+                          <div className="w-40 h-40 md:w-48 md:h-48 rounded-2xl overflow-hidden backdrop-blur-xl bg-white/[0.05] border border-white/15 shadow-[0_15px_35px_rgba(0,0,0,0.4)] flex items-center justify-center transition-all duration-500 group-hover/cover:scale-105 group-hover/cover:shadow-[0_20px_40px_rgba(255,255,255,0.05)] group-active/cover:scale-95">
+                            {coverArtUrl ? (
+                              <img src={coverArtUrl} alt="Cover" className="w-full h-full object-cover transition-transform duration-700 group-hover/cover:scale-110" />
+                            ) : (
+                              <div className="flex flex-col items-center gap-3 text-zinc-500 group-hover/cover:text-zinc-300 transition-colors">
+                                <div className="w-12 h-12 rounded-full bg-black/20 flex items-center justify-center">
+                                  <ImageIcon className="w-6 h-6 opacity-60" />
+                                </div>
+                                <span className="text-sm font-medium tracking-wide">הוסף עטיפה</span>
+                              </div>
+                            )}
+                            
+                            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm opacity-0 group-hover/cover:opacity-100 transition-opacity duration-300 flex flex-col items-center justify-center gap-2">
+                              <Upload className="w-8 h-8 text-white drop-shadow-lg" />
+                              <span className="text-white text-sm font-medium shadow-black drop-shadow-md">החלף תמונה</span>
+                            </div>
+                          </div>
+                          <input type="file" accept="image/*" className="hidden" onChange={handleCoverUpload} />
+                        </label>
+                      </div>
+
+                      <div className="flex items-end justify-center gap-1.5 h-12 mb-6 opacity-80">
+                        {[...Array(24)].map((_, i) => (
+                          <div 
+                            key={i} 
+                            className={`w-1.5 bg-gradient-to-t from-blue-500 to-purple-400 rounded-full transition-all duration-300 ${isPlaying ? 'playing-eq' : 'h-1'}`}
+                            style={{
+                              animationDelay: isPlaying ? `${Math.sin(i) * 0.5}s` : '0s',
+                              animationDuration: isPlaying ? `${0.4 + (i % 3) * 0.1}s` : '0s',
+                            }}
+                          ></div>
+                        ))}
+                      </div>
+
+                      <div className="mb-8 relative z-10">
+                        <div 
+                          ref={progressBarRef}
+                          onClick={handleSeek}
+                          className="h-3 w-full bg-black/40 rounded-full cursor-pointer relative border border-white/5 overflow-hidden group-hover:border-white/10 transition-colors"
+                        >
+                          <div 
+                            className="absolute top-0 right-0 h-full bg-gradient-to-l from-blue-500 to-purple-500 rounded-full transition-all duration-100 ease-linear shadow-[0_0_10px_rgba(59,130,246,0.5)]"
+                            style={{ width: `${(currentTime / duration) * 100}%` }}
+                          ></div>
+                          
+                          {gnrInsights.map((insight) => {
+                            const position = (insight.startTime / duration) * 100;
+                            return (
+                              <div 
+                                key={insight.id}
+                                className="absolute top-1/2 -translate-y-1/2 w-1.5 h-3 bg-white/70 rounded-full hover:scale-150 hover:bg-white transition-all cursor-pointer z-10"
+                                style={{ right: `${position}%` }}
+                                title={insight.title}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  seekTo(insight.startTime);
+                                }}
+                              ></div>
+                            );
+                          })}
+                        </div>
+                        <div className="flex justify-between text-xs text-zinc-400 mt-3 font-medium tracking-wide">
+                          <span>{formatTime(currentTime)}</span>
+                          <span>{formatTime(duration)}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        
+                        <div className="flex items-center gap-3 w-1/3">
+                          <button onClick={() => setIsMuted(!isMuted)} className="text-zinc-400 hover:text-white transition-colors">
+                            {isMuted || volume === 0 ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+                          </button>
+                          <input 
+                            type="range" 
+                            min="0" max="1" step="0.01" 
+                            value={isMuted ? 0 : volume}
+                            onChange={(e) => {
+                              setVolume(parseFloat(e.target.value));
+                              setIsMuted(false);
+                            }}
+                            className="w-24 h-1.5 bg-black/40 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
+                          />
+                        </div>
+
+                        <div className="flex items-center gap-4 justify-center w-1/3 text-dir-ltr" dir="ltr">
+                          <button onClick={() => skip(-10)} className={`${glassButtonClass} w-10 h-10`} title="10 שניות אחורה">
+                            <SkipBack className="w-4 h-4" />
+                          </button>
+                          <button 
+                            onClick={togglePlay} 
+                            className={`${glassButtonClass} w-16 h-16 bg-white/10 hover:bg-white/20 border-white/20 shadow-[0_0_20px_rgba(255,255,255,0.05)]`}
+                          >
+                            {isPlaying ? <Pause className="w-7 h-7 fill-white" /> : <Play className="w-7 h-7 fill-white translate-x-0.5" />}
+                          </button>
+                          <button onClick={() => skip(10)} className={`${glassButtonClass} w-10 h-10`} title="10 שניות קדימה">
+                            <SkipForward className="w-4 h-4" />
+                          </button>
+                        </div>
+                        
+                        <div className="w-1/3 flex justify-end">
+                          <button 
+                            onClick={addBookmark}
+                            className="flex items-center gap-2 text-zinc-400 hover:text-white transition-colors text-sm px-3 py-1.5 rounded-full hover:bg-white/5 border border-transparent hover:border-white/10"
+                          >
+                            <BookmarkPlus className="w-4 h-4" />
+                            <span className="hidden sm:inline">סמן רגע</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {audioFileUrl && (
+                        <audio ref={audioRef} src={audioFileUrl} preload="metadata" />
+                      )}
+                    </div>
+
+                    <div>
+                      <h3 className="text-lg font-semibold mb-4 text-white/90 flex items-center gap-2">
+                        <Activity className="w-5 h-5 text-blue-400" />
+                        מפת ניתוח השיר
+                      </h3>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {gnrInsights.map((insight) => {
+                          const isActive = activeInsight?.id === insight.id;
+                          return (
+                            <button
+                              key={insight.id}
+                              onClick={() => seekTo(insight.startTime)}
+                              className={`text-right p-4 transition-all duration-300 ${glassPanelClass} flex flex-col gap-2 hover:-translate-y-1 hover:bg-white/[0.08] ${
+                                isActive ? 'border-blue-400/50 shadow-[0_0_20px_rgba(96,165,250,0.15)] bg-blue-500/[0.05]' : ''
+                              }`}
+                            >
+                              <div className="flex items-center justify-between w-full">
+                                <span className={`text-xs font-mono px-2 py-1 rounded-lg bg-black/30 border ${isActive ? 'border-blue-500/30 text-blue-300' : 'border-white/5 text-zinc-400'}`}>
+                                  {formatTime(insight.startTime)}
+                                </span>
+                                {insight.icon}
+                              </div>
+                              <h4 className="text-sm font-semibold text-white/90 mt-1">{insight.title}</h4>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {bookmarks.length > 0 && (
+                        <div className="mt-6 animate-fade-in">
+                          <h4 className="text-sm font-semibold mb-3 text-zinc-300 flex items-center gap-2">
+                            <Bookmark className="w-4 h-4 text-purple-400" />
+                            רגעים שסומנו ({bookmarks.length})
+                          </h4>
+                          <div className="flex flex-wrap gap-2">
+                            {bookmarks.map((time, i) => (
+                              <button 
+                                key={i} 
+                                onClick={() => seekTo(time)} 
+                                className={`px-3 py-1.5 rounded-xl text-xs font-mono flex items-center gap-2 ${glassPanelClass} hover:bg-white/10 transition-colors border-purple-500/30 group`}
+                              >
+                                <span className="text-purple-400 group-hover:scale-125 transition-transform">●</span> 
+                                {formatTime(time)}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                  </div>
+
+                  <div className="lg:col-span-5 h-full">
+                    <div className={`h-full min-h-[500px] flex flex-col p-6 lg:p-8 ${glassPanelClass} relative overflow-hidden`}>
+                      
+                      <div className="flex items-center justify-between mb-8 pb-6 border-b border-white/10">
+                        <div className="flex items-center gap-3">
+                          <div className="relative">
+                            <Activity className="w-6 h-6 text-purple-400" />
+                            {isPlaying && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-green-400 rounded-full animate-ping"></span>}
+                          </div>
+                          <h2 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-purple-300 to-blue-300">
+                            Live Insights Engine
+                          </h2>
+                        </div>
+                        <div className="flex items-center gap-2 text-xs font-mono bg-black/40 px-3 py-1.5 rounded-full border border-white/10">
+                          <span className={isPlaying ? "text-green-400" : "text-zinc-500"}>●</span>
+                          <span className="text-zinc-300">SYNCED</span>
+                        </div>
+                      </div>
+
+                      <div className="flex-1 flex flex-col justify-center">
+                        {activeInsight ? (
+                          <div className="animate-fade-in">
+                            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-300 text-sm mb-6">
+                              <Settings2 className="w-4 h-4" />
+                              <span>ניתוח טכני פעיל</span>
+                            </div>
+                            
+                            <h3 className="text-3xl font-bold mb-4 leading-tight text-white/95">
+                              {activeInsight.title}
+                            </h3>
+                            
+                            <div className="p-5 rounded-2xl bg-black/20 border border-white/5 shadow-inner">
+                              <p className="text-lg text-zinc-300 leading-relaxed">
+                                {activeInsight.description}
+                              </p>
+                            </div>
+                            
+                            <div className="mt-8 flex gap-2 h-12 items-end justify-between px-2 opacity-60">
+                              {[...Array(20)].map((_, i) => (
+                                <div 
+                                  key={i} 
+                                  className="w-1.5 bg-gradient-to-t from-blue-500 to-purple-500 rounded-t-full transition-all duration-300"
+                                  style={{ 
+                                    height: isPlaying ? `${Math.max(20, Math.random() * 100)}%` : '20%',
+                                    transitionDelay: `${i * 20}ms` 
+                                  }}
+                                ></div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center justify-center text-center opacity-50 space-y-4">
+                            <Music className="w-12 h-12 text-zinc-500" />
+                            <p className="text-lg">ממתין לזיהוי מקטע...</p>
+                          </div>
+                        )}
+                      </div>
+
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+
+              {showCompareModal && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-fade-in">
+                  <div className={`relative w-full max-w-3xl p-6 md:p-8 ${glassPanelClass} bg-[#18181b]/80 shadow-[0_0_50px_rgba(0,0,0,0.5)]`}>
+                    <button 
+                      onClick={() => setShowCompareModal(false)} 
+                      className="absolute top-4 right-4 p-2 text-zinc-400 hover:text-white bg-white/5 hover:bg-white/10 rounded-full transition-colors"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                    
+                    <h2 className="text-2xl md:text-3xl font-bold mb-6 flex items-center gap-3">
+                      <GitCompare className="w-7 h-7 text-blue-400" /> 
+                      Studio vs. Live <span className="text-zinc-500 text-lg font-normal">(1991 vs. Tokyo 1992)</span>
+                    </h2>
+                    
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-right">
+                        <thead>
+                          <tr className="border-b border-white/10 text-zinc-400">
+                            <th className="pb-4 font-medium px-4">פרמטר ניתוח</th>
+                            <th className="pb-4 font-medium px-4">גרסת אולפן (Studio 1991)</th>
+                            <th className="pb-4 font-medium px-4 text-blue-300">הופעה חיה (Live)</th>
+                          </tr>
+                        </thead>
+                        <tbody className="text-white/90">
+                          <tr className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                            <td className="py-5 px-4 font-semibold text-white">טמפו (BPM)</td>
+                            <td className="px-4 text-zinc-300">78 BPM (קבוע ומתוכנת)</td>
+                            <td className="px-4 text-blue-200">82-85 BPM (דינמי, מאיץ לקראת הפזמון)</td>
+                          </tr>
+                          <tr className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                            <td className="py-5 px-4 font-semibold text-white">כיוון גיטרות</td>
+                            <td className="px-4 text-zinc-300">Standard Eb (חצי טון למטה)</td>
+                            <td className="px-4 text-purple-300">Eb עם דיסטורשן מוגבר ו-Feedback</td>
+                          </tr>
+                          <tr className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                            <td className="py-5 px-4 font-semibold text-white">אורך סולו גיטרה</td>
+                            <td className="px-4 text-zinc-300">45 שניות</td>
+                            <td className="px-4 text-orange-300">1:15 דקות (כולל אימפרוביזציה ו-Extended Bends)</td>
+                          </tr>
+                          <tr className="hover:bg-white/5 transition-colors">
+                            <td className="py-5 px-4 font-semibold text-white">דינמיקה ווקאלית</td>
+                            <td className="px-4 text-zinc-300">נקייה, הרמוניות מוכפלות אולפנית</td>
+                            <td className="px-4 text-green-300">חספוס עמוק (Grit), שינויי אוקטבות מאולתרים</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    
+                    <div className="mt-8 flex justify-end">
+                      <button 
+                        onClick={() => setShowCompareModal(false)}
+                        className="px-6 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-full font-medium transition-colors shadow-lg shadow-blue-500/25"
+                      >
+                        סגור ניתוח
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
